@@ -1,0 +1,30 @@
+﻿using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+
+namespace FirstProject.Services
+{
+    public class TextResponseFormatter : IResponseFormatter
+    {
+        private int _responseCounter = 0;
+
+        private static TextResponseFormatter _shared;
+
+        public static TextResponseFormatter Singleton
+        {
+            get
+            {
+                if (_shared == null)
+                {
+                    _shared = new TextResponseFormatter();
+                }
+
+                return _shared;
+            }
+        }
+
+        public async Task Format(HttpContext context, string content)
+        {
+            await context.Response.WriteAsync($"Response {++_responseCounter}:\n{content}");
+        }
+    }
+}
