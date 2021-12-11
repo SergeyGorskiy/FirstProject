@@ -1,99 +1,74 @@
-using System;
-using System.Runtime.InteropServices.ComTypes;
-using System.Threading.Tasks;
+using FirstProject.EF;
+using FirstProject.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace FirstProject
 {
     public class Startup
     {
-        public void ConfigureServices(IServiceCollection services)
+        public Startup(IConfiguration configuration)
         {
-            services.Configure<CookiePolicyOptions>(opts => { opts.CheckConsentNeeded = context => true; });
-
-            services.AddDistributedMemoryCache();
-
-            services.AddSession(options =>
-            {
-                options.IdleTimeout = TimeSpan.FromMinutes(30);
-                options.Cookie.IsEssential = true;
-            });
-
-            services.AddHsts(opts =>
-            {
-                opts.MaxAge = TimeSpan.FromDays(1);
-                opts.IncludeSubDomains = true;
-            });
+            Configuration = configuration;
         }
 
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ILogger<Startup> logger)
+        private IConfiguration Configuration { get; set; }
+
+        public void ConfigureServices(IServiceCollection services)
         {
-            
-            //app.UseDeveloperExceptionPage();
-
-            app.UseExceptionHandler("/error.html");
-
-            if (env.IsProduction())
+            services.AddDistributedSqlServerCache(opts =>
             {
-                app.UseHsts();
-            }
+                opts.ConnectionString = Configuration["ConnectionStrings:CacheConnection"];
+                opts.SchemaName = "dbo";
+                opts.TableName = "DataCache";
+            });
+
+            services.AddResponseCaching();
+            services.AddSingleton<IResponseFormatter, HtmlResponseFormatter>();
+
+            services.AddDbContext<CalculationContext>(opts =>
+            {
+                opts.UseSqlServer(Configuration["ConnectionStrings:CalcConnection"]);
+            });
+
+            services.AddTransient<SeedData>();
+        }
+
+        public void Configure(IApplicationBuilder app, IHostApplicationLifetime lifetime, IWebHostEnvironment env, SeedData seedData)
+        {
+            app.UseDeveloperExceptionPage();
+
+            app.UseResponseCaching();
 
             app.UseStaticFiles();
 
-            app.UseHttpsRedirection();
+            app.UseRouting();
 
-            app.UseStatusCodePages("text/html", Responses.DefaultResponse);
-
-            app.UseCookiePolicy();
-
-            app.UseMiddleware<ConsentMiddleware>();
-
-            app.UseSession();
-
-            
-
-            //app.UseRouting();
-
-            app.Use(async (context, next) =>
+            app.UseEndpoints(endpoints =>
             {
-                if (context.Request.Path == "/error")
+                endpoints.MapEndpoint<SumEndpoint>("/sum/{count:int=1000000000}");
+
+                endpoints.MapFallback(async context =>
                 {
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await Task.CompletedTask;
-                }
-                else
-                {
-                    await next();
-                }
+                    await context.Response.WriteAsync("Hello World");
+                });
             });
 
-            app.Run(context =>
+            bool cmdLineInit = (Configuration["INITDB"] ?? "false") == "true";
+
+            if (env.IsDevelopment() || cmdLineInit)
             {
-                throw new Exception("Something has gone wrong");
-            });
-
-            //app.UseEndpoints(endpoints =>
-            //{
-            //    endpoints.MapGet("/cookie", async context =>
-            //    {
-            //        int counter1 = (context.Session.GetInt32("counter1") ?? 0) + 1;
-            //        int counter2 = (context.Session.GetInt32("counter2") ?? 0) + 1;
-            //        context.Session.SetInt32("counter1", counter1);
-            //        context.Session.SetInt32("counter2", counter2);
-            //        await context.Session.CommitAsync();
-            //        await context.Response.WriteAsync($"Counter1: {counter1}, Counter2: {counter2}");
-            //    });
-
-            //    endpoints.MapFallback(async context =>
-            //    {
-            //        await context.Response.WriteAsync("Hello World");
-            //    });
-            //});
+                seedData.SeedDatabase();
+                if (cmdLineInit)
+                {
+                    lifetime.StopApplication();
+                }
+            }
         }
     }
 }
